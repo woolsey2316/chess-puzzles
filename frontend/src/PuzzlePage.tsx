@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
 import type { Square } from 'chess.js'
+import { useAuth } from './auth'
 
 interface Puzzle {
   puzzle_id: string
@@ -52,6 +53,7 @@ function buildMoveRows(history: string[], firstMover: 'w' | 'b', startNum: numbe
 }
 
 export default function PuzzlePage() {
+  const { user, logout, updateElo, authFetch } = useAuth()
   const [puzzle, setPuzzle] = useState<Puzzle | null>(null)
   const [game, setGame] = useState<Chess>(new Chess())
   const [moveHistory, setMoveHistory] = useState<string[]>([])
@@ -62,6 +64,9 @@ export default function PuzzlePage() {
   const [status, setStatus] = useState<Status>('loading')
   const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white')
   const moveListRef = useRef<HTMLDivElement>(null)
+  const submittedRef = useRef(false)
+  const findSolutionUsedRef = useRef(false)
+  const currentPuzzleIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     moveListRef.current?.scrollTo({ top: moveListRef.current.scrollHeight, behavior: 'smooth' })
@@ -70,8 +75,11 @@ export default function PuzzlePage() {
   const loadPuzzle = useCallback(async () => {
     setStatus('loading')
     setMoveHistory([])
+    submittedRef.current = false
+    findSolutionUsedRef.current = false
+    currentPuzzleIdRef.current = null
     try {
-      const res = await fetch('http://localhost:8000/api/puzzles/random/')
+      const res = await authFetch('http://localhost:8000/api/puzzles/random/')
       if (!res.ok) throw new Error()
       const data: Puzzle = await res.json()
       const moves = data.moves.trim().split(' ')
@@ -93,13 +101,31 @@ export default function PuzzlePage() {
       setFirstMover(opponentColor)
       setStartMoveNum(fullMoveNum)
       setMoveHistory(firstMove ? [firstMove.san] : [])
+      currentPuzzleIdRef.current = data.puzzle_id
       setStatus('playing')
     } catch {
       setStatus('error')
     }
-  }, [])
+  }, [authFetch])
 
   useEffect(() => { loadPuzzle() }, [loadPuzzle])
+
+  // Submit result once when puzzle is solved
+  useEffect(() => {
+    if (status !== 'solved') return
+    if (submittedRef.current) return
+    const puzzleId = currentPuzzleIdRef.current
+    if (!puzzleId) return
+    submittedRef.current = true
+    const solved = !findSolutionUsedRef.current
+    authFetch(`http://localhost:8000/api/puzzles/${puzzleId}/submit/`, {
+      method: 'POST',
+      body: JSON.stringify({ solved }),
+    })
+      .then(res => res.json())
+      .then(data => { if (data.puzzle_elo) updateElo(data.puzzle_elo) })
+      .catch(() => {})
+  }, [status, authFetch, updateElo])
 
   const playOpponentMove = useCallback(
     (currentGame: Chess, nextIndex: number, moves: string[], history: string[]) => {
@@ -159,6 +185,7 @@ export default function PuzzlePage() {
 
   const findSolution = useCallback(() => {
     if (status !== 'playing' && status !== 'wrong') return
+    findSolutionUsedRef.current = true
     const move = uciToMove(solutionMoves[moveIndex])
     applyMove(move.from, move.to, move.promotion)
   }, [status, solutionMoves, moveIndex, applyMove])
@@ -183,6 +210,18 @@ export default function PuzzlePage() {
       <header className="shrink-0 border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex items-center gap-3">
         <span className="text-2xl">♟</span>
         <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Chess Puzzles</h1>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            <span className="font-medium text-gray-700 dark:text-gray-200">{user?.username}</span>
+            {' · '}Elo <span className="font-bold text-violet-600 dark:text-violet-400">{user?.puzzle_elo}</span>
+          </span>
+          <button
+            onClick={logout}
+            className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors cursor-pointer"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       <div className="flex flex-1 min-h-0">
@@ -197,7 +236,7 @@ export default function PuzzlePage() {
           {puzzle ? (
             <>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">Rating</p>
+                <p className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">Puzzle Rating</p>
                 <p className="text-3xl font-bold text-gray-900 dark:text-white">{puzzle.rating}</p>
               </div>
 

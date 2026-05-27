@@ -8,7 +8,10 @@ from puzzle.models import Puzzle
 
 BATCH_SIZE = 5000
 
-
+# run command 
+# cd backend
+# pipenv run python manage.py import_puzzles ../data/lichess_db_puzzle.csv.zst
+#
 class Command(BaseCommand):
     help = "Import puzzles from a Lichess CSV or CSV.ZST file into the database."
 
