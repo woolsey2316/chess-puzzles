@@ -66,6 +66,7 @@ export default function PuzzlePage() {
   const moveListRef = useRef<HTMLDivElement>(null)
   const submittedRef = useRef(false)
   const findSolutionUsedRef = useRef(false)
+  const wrongAttemptRef = useRef(false)
   const currentPuzzleIdRef = useRef<string | null>(null)
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export default function PuzzlePage() {
     setMoveHistory([])
     submittedRef.current = false
     findSolutionUsedRef.current = false
+    wrongAttemptRef.current = false
     currentPuzzleIdRef.current = null
     try {
       const res = await authFetch('http://localhost:8000/api/puzzles/random/')
@@ -117,7 +119,7 @@ export default function PuzzlePage() {
     const puzzleId = currentPuzzleIdRef.current
     if (!puzzleId) return
     submittedRef.current = true
-    const solved = !findSolutionUsedRef.current
+    const solved = !findSolutionUsedRef.current && !wrongAttemptRef.current
     authFetch(`http://localhost:8000/api/puzzles/${puzzleId}/submit/`, {
       method: 'POST',
       body: JSON.stringify({ solved }),
@@ -152,6 +154,7 @@ export default function PuzzlePage() {
 
       const playedUci = result.from + result.to + (result.promotion ?? '')
       if (playedUci !== solutionMoves[moveIndex]) {
+        wrongAttemptRef.current = true
         setStatus('wrong')
         return false
       }
