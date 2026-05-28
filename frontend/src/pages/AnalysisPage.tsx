@@ -88,17 +88,29 @@ export default function AnalysisPage() {
 
   const workerRef = useRef<Worker | null>(null)
   const isReadyRef = useRef(false)
+  const isSearchingRef = useRef(false)
+  const pendingFenRef = useRef<string | null>(null)
   const currentFenRef = useRef(new Chess().fen())
+
+  const startSearch = useCallback((worker: Worker, fen: string) => {
+    currentFenRef.current = fen
+    worker.postMessage(`position fen ${fen}`)
+    worker.postMessage('go infinite')
+    isSearchingRef.current = true
+  }, [])
 
   const sendAnalysis = useCallback((fen: string) => {
     const worker = workerRef.current
     if (!worker || !isReadyRef.current) return
-    currentFenRef.current = fen
     setAnalysis(null)
-    worker.postMessage('stop')
-    worker.postMessage(`position fen ${fen}`)
-    worker.postMessage('go infinite')
-  }, [])
+    if (isSearchingRef.current) {
+      // Store the new position and stop — startSearch will be called when bestmove arrives
+      pendingFenRef.current = fen
+      worker.postMessage('stop')
+    } else {
+      startSearch(worker, fen)
+    }
+  }, [startSearch])
 
   // Init Stockfish worker
   useEffect(() => {
@@ -112,7 +124,15 @@ export default function AnalysisPage() {
       } else if (line === 'readyok') {
         isReadyRef.current = true
         setEngineReady(true)
-        sendAnalysis(currentFenRef.current)
+        startSearch(worker, currentFenRef.current)
+      } else if (line.startsWith('bestmove')) {
+        // Engine has fully stopped — now safe to send the next position
+        isSearchingRef.current = false
+        const pending = pendingFenRef.current
+        if (pending !== null) {
+          pendingFenRef.current = null
+          startSearch(worker, pending)
+        }
       } else if (line.startsWith('info')) {
         const parsed = parseInfoLine(line, currentFenRef.current)
         if (parsed) {
@@ -123,7 +143,7 @@ export default function AnalysisPage() {
 
     worker.postMessage('uci')
     return () => { worker.postMessage('quit'); worker.terminate() }
-  }, [sendAnalysis])
+  }, [startSearch])
 
   // Re-analyze on position change
   useEffect(() => {
