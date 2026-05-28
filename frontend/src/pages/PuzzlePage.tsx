@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
 import type { Square } from 'chess.js'
-import { useAuth } from './auth'
+import { useAuth } from '../auth'
 
 interface Puzzle {
   puzzle_id: string
@@ -32,6 +32,8 @@ interface MoveRow {
   num: number
   white: string | null
   black: string | null
+  whiteIdx: number | null
+  blackIdx: number | null
 }
 
 // Build display rows from a flat SAN history, knowing who played the first move.
@@ -41,12 +43,20 @@ function buildMoveRows(history: string[], firstMover: 'w' | 'b', startNum: numbe
   let num = startNum
 
   if (firstMover === 'b') {
-    // First entry is black's move; white slot is blank for that row.
-    rows.push({ num, white: null, black: history[i++] ?? null })
+    rows.push({ num, white: null, black: history[i] ?? null, whiteIdx: null, blackIdx: i < history.length ? i : null })
+    i++
     num++
   }
   while (i < history.length) {
-    rows.push({ num, white: history[i++] ?? null, black: history[i++] ?? null })
+    const wi = i, bi = i + 1
+    rows.push({
+      num,
+      white: history[wi] ?? null,
+      black: history[bi] ?? null,
+      whiteIdx: wi < history.length ? wi : null,
+      blackIdx: bi < history.length ? bi : null,
+    })
+    i += 2
     num++
   }
   return rows
@@ -56,6 +66,8 @@ export default function PuzzlePage() {
   const { user, logout, updateElo, authFetch } = useAuth()
   const [puzzle, setPuzzle] = useState<Puzzle | null>(null)
   const [game, setGame] = useState<Chess>(new Chess())
+  const [fenHistory, setFenHistory] = useState<string[]>([])
+  const [replayIndex, setReplayIndex] = useState(0)
   const [moveHistory, setMoveHistory] = useState<string[]>([])
   const [firstMover, setFirstMover] = useState<'w' | 'b'>('w')
   const [startMoveNum, setStartMoveNum] = useState(1)
@@ -70,12 +82,16 @@ export default function PuzzlePage() {
   const currentPuzzleIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    moveListRef.current?.scrollTo({ top: moveListRef.current.scrollHeight, behavior: 'smooth' })
-  }, [moveHistory])
+    if (replayIndex === fenHistory.length - 1) {
+      moveListRef.current?.scrollTo({ top: moveListRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [moveHistory, replayIndex, fenHistory.length])
 
   const loadPuzzle = useCallback(async () => {
     setStatus('loading')
     setMoveHistory([])
+    setFenHistory([])
+    setReplayIndex(0)
     submittedRef.current = false
     findSolutionUsedRef.current = false
     wrongAttemptRef.current = false
@@ -94,6 +110,7 @@ export default function PuzzlePage() {
       const chess = new Chess(data.fen)
       const firstMove = chess.move(uciToMove(moves[0]))
       const activeColor = chess.turn() === 'w' ? 'white' : 'black'
+      const initialHistory = firstMove ? [firstMove.san] : []
 
       setPuzzle(data)
       setGame(chess)
@@ -102,7 +119,9 @@ export default function PuzzlePage() {
       setPlayerColor(activeColor)
       setFirstMover(opponentColor)
       setStartMoveNum(fullMoveNum)
-      setMoveHistory(firstMove ? [firstMove.san] : [])
+      setMoveHistory(initialHistory)
+      setFenHistory([data.fen, chess.fen()])
+      setReplayIndex(1)
       currentPuzzleIdRef.current = data.puzzle_id
       setStatus('playing')
     } catch {
@@ -110,7 +129,9 @@ export default function PuzzlePage() {
     }
   }, [authFetch])
 
-  useEffect(() => { loadPuzzle() }, [loadPuzzle])
+  // Load the first puzzle on mount only; subsequent loads are triggered by the button.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadPuzzle() }, [])
 
   // Submit result once when puzzle is solved
   useEffect(() => {
@@ -138,6 +159,8 @@ export default function PuzzlePage() {
         const newHistory = result ? [...history, result.san] : history
         setGame(updated)
         setMoveHistory(newHistory)
+        setFenHistory(prev => [...prev, updated.fen()])
+        setReplayIndex(prev => prev + 1)
         const after = nextIndex + 1
         setMoveIndex(after)
         if (after >= moves.length) setStatus('solved')
@@ -162,6 +185,8 @@ export default function PuzzlePage() {
       const newHistory = [...moveHistory, result.san]
       setGame(updated)
       setMoveHistory(newHistory)
+      setFenHistory(prev => [...prev, updated.fen()])
+      setReplayIndex(prev => prev + 1)
       setStatus('playing')
       const next = moveIndex + 1
       setMoveIndex(next)
@@ -193,8 +218,14 @@ export default function PuzzlePage() {
     applyMove(move.from, move.to, move.promotion)
   }, [status, solutionMoves, moveIndex, applyMove])
 
+  const stepBack = useCallback(() => setReplayIndex(i => Math.max(0, i - 1)), [])
+  const stepForward = useCallback(() => setReplayIndex(i => Math.min(fenHistory.length - 1, i + 1)), [fenHistory.length])
+
+  const activeMoveIdx = replayIndex - 1
   const moveRows = buildMoveRows(moveHistory, firstMover, startMoveNum)
-  const canInteract = status === 'playing' || status === 'wrong'
+  const isAtLive = replayIndex === fenHistory.length - 1
+  const canInteract = (status === 'playing' || status === 'wrong') && isAtLive
+  const displayFen = fenHistory[replayIndex] ?? game.fen()
 
   const statusConfig: Record<Status, { text: string; cls: string }> = {
     loading: { text: 'Loading…',          cls: 'bg-gray-100 dark:bg-gray-800 text-gray-500' },
@@ -283,7 +314,7 @@ export default function PuzzlePage() {
             )}
             <Chessboard
               options={{
-                position: game.fen(),
+                position: displayFen,
                 boardOrientation: playerColor,
                 allowDragging: canInteract,
                 onPieceDrop,
@@ -306,14 +337,37 @@ export default function PuzzlePage() {
                   {moveRows.map((row, i) => (
                     <tr key={i} className={i % 2 === 0 ? '' : 'bg-gray-50 dark:bg-gray-800/50'}>
                       <td className="px-3 py-1.5 text-gray-400 font-mono select-none w-8">{row.num}.</td>
-                      <td className="px-2 py-1.5 font-mono text-gray-800 dark:text-gray-200 w-1/2">{row.white ?? ''}</td>
-                      <td className="px-2 py-1.5 font-mono text-gray-800 dark:text-gray-200 w-1/2">{row.black ?? ''}</td>
+                      <td className={`px-2 py-1.5 font-mono w-1/2 ${row.whiteIdx === activeMoveIdx ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-gray-800 dark:text-gray-200'}`}>
+                        {row.white ?? ''}
+                      </td>
+                      <td className={`px-2 py-1.5 font-mono w-1/2 ${row.blackIdx === activeMoveIdx ? 'text-violet-600 dark:text-violet-400 font-semibold' : 'text-gray-800 dark:text-gray-200'}`}>
+                        {row.black ?? ''}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
           </div>
+
+          {status === 'solved' && (
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={stepBack}
+                disabled={replayIndex === 0}
+                className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-default text-gray-700 dark:text-gray-300 font-medium py-2 text-lg transition-colors cursor-pointer"
+              >
+                ←
+              </button>
+              <button
+                onClick={stepForward}
+                disabled={isAtLive}
+                className="flex-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-default text-gray-700 dark:text-gray-300 font-medium py-2 text-lg transition-colors cursor-pointer"
+              >
+                →
+              </button>
+            </div>
+          )}
 
           <div className="flex flex-col gap-2 shrink-0">
             {canInteract && (
