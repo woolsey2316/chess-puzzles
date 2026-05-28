@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
 import type { Square } from 'chess.js'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../auth'
 
 interface Puzzle {
@@ -244,7 +245,10 @@ export default function PuzzlePage() {
       <header className="shrink-0 border-b border-gray-200 dark:border-gray-800 px-6 py-3 flex items-center gap-3">
         <span className="text-2xl">♟</span>
         <h1 className="text-lg font-semibold tracking-tight text-gray-900 dark:text-white">Chess Puzzles</h1>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-4">
+          <Link to="/analysis" className="text-sm text-violet-600 dark:text-violet-400 hover:underline">
+            Analysis
+          </Link>
           <span className="text-sm text-gray-500 dark:text-gray-400">
             <span className="font-medium text-gray-700 dark:text-gray-200">{user?.username}</span>
             {' · '}Elo <span className="font-bold text-violet-600 dark:text-violet-400">{user?.puzzle_elo}</span>

@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth'
 import AuthPage from './pages/AuthPage'
 import PuzzlePage from './pages/PuzzlePage'
+import AnalysisPage from './pages/AnalysisPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
@@ -21,6 +22,7 @@ function App() {
         <Routes>
           <Route path="/login" element={<GuestRoute><AuthPage /></GuestRoute>} />
           <Route path="/puzzle" element={<ProtectedRoute><PuzzlePage /></ProtectedRoute>} />
+          <Route path="/analysis" element={<ProtectedRoute><AnalysisPage /></ProtectedRoute>} />
           <Route path="*" element={<NavigateByAuth />} />
         </Routes>
       </AuthProvider>
