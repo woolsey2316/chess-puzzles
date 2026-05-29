@@ -4,7 +4,6 @@ import { Chess } from 'chess.js'
 import type { Square } from 'chess.js'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth'
-
 interface Puzzle {
   puzzle_id: string
   fen: string
@@ -384,6 +383,14 @@ export default function PuzzlePage() {
               className="w-full rounded-lg bg-violet-600 hover:bg-violet-700 text-white font-medium py-2 px-4 text-sm transition-colors cursor-pointer">
               Next Puzzle
             </button>
+            {status === 'solved' && (
+              <Link
+                to={`/analysis?fen=${encodeURIComponent(fenHistory[1] ?? puzzle?.fen ?? game.fen())}`}
+                className="w-full rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300 font-medium py-2 px-4 text-sm transition-colors text-center"
+              >
+                Load Analysis
+              </Link>
+            )}
           </div>
         </aside>
 

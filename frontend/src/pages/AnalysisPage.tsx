@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Chessboard } from 'react-chessboard'
 import { Chess } from 'chess.js'
 import type { Square } from 'chess.js'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import type { Arrow } from 'react-chessboard'
 import { useAuth } from '../auth'
 
@@ -78,10 +78,19 @@ function formatScore(wEval: Eval): string {
 
 export default function AnalysisPage() {
   const { user, logout } = useAuth()
-  const [game, setGame] = useState(() => new Chess())
+  const [searchParams] = useSearchParams()
+  const initialFen = searchParams.get('fen')
+  const [game, setGame] = useState(() => {
+    if (initialFen) { try { return new Chess(initialFen) } catch { /* fall through */ } }
+    return new Chess()
+  })
   const [fenInput, setFenInput] = useState('')
   const [fenError, setFenError] = useState('')
-  const [orientation, setOrientation] = useState<'white' | 'black'>('white')
+  const [orientation, setOrientation] = useState<'white' | 'black'>(() => {
+    // FEN second field is the active color: 'w' or 'b'
+    const activeColor = (initialFen ?? '').trim().split(/\s+/)[1]
+    return activeColor === 'b' ? 'black' : 'white'
+  })
   const [analysis, setAnalysis] = useState<Analysis | null>(null)
   const [engineReady, setEngineReady] = useState(false)
   const [showArrow, setShowArrow] = useState(true)
@@ -90,12 +99,20 @@ export default function AnalysisPage() {
   const isReadyRef = useRef(false)
   const isSearchingRef = useRef(false)
   const pendingFenRef = useRef<string | null>(null)
-  const currentFenRef = useRef(new Chess().fen())
+  const currentFenRef = useRef(game.fen())
+  // 'quick' = low-depth pass running; 'deep' = go infinite running
+  const searchPhaseRef = useRef<'quick' | 'deep'>('quick')
+  // true while we're waiting for bestmove before starting the next search
+  const ignoringInfoRef = useRef(false)
+
+  const QUICK_DEPTH = 10
 
   const startSearch = useCallback((worker: Worker, fen: string) => {
     currentFenRef.current = fen
+    searchPhaseRef.current = 'quick'
+    ignoringInfoRef.current = false
     worker.postMessage(`position fen ${fen}`)
-    worker.postMessage('go infinite')
+    worker.postMessage(`go depth ${QUICK_DEPTH}`)
     isSearchingRef.current = true
   }, [])
 
@@ -103,6 +120,7 @@ export default function AnalysisPage() {
     const worker = workerRef.current
     if (!worker || !isReadyRef.current) return
     setAnalysis(null)
+    ignoringInfoRef.current = true
     if (isSearchingRef.current) {
       // Store the new position and stop — startSearch will be called when bestmove arrives
       pendingFenRef.current = fen
@@ -126,14 +144,20 @@ export default function AnalysisPage() {
         setEngineReady(true)
         startSearch(worker, currentFenRef.current)
       } else if (line.startsWith('bestmove')) {
-        // Engine has fully stopped — now safe to send the next position
         isSearchingRef.current = false
         const pending = pendingFenRef.current
         if (pending !== null) {
+          // A new position arrived while we were searching — start quick search on it
           pendingFenRef.current = null
           startSearch(worker, pending)
+        } else if (searchPhaseRef.current === 'quick') {
+          // Quick pass done, escalate to full-depth analysis on the same position
+          searchPhaseRef.current = 'deep'
+          worker.postMessage(`position fen ${currentFenRef.current}`)
+          worker.postMessage('go infinite')
+          isSearchingRef.current = true
         }
-      } else if (line.startsWith('info')) {
+      } else if (line.startsWith('info') && !ignoringInfoRef.current) {
         const parsed = parseInfoLine(line, currentFenRef.current)
         if (parsed) {
           setAnalysis(prev => (!prev || parsed.depth >= prev.depth) ? parsed : prev)
@@ -160,7 +184,7 @@ export default function AnalysisPage() {
     const updated = new Chess(game.fen())
     const promotion =
       piece.pieceType?.[1]?.toLowerCase() === 'p' &&
-      (targetSquare[1] === '8' || targetSquare[1] === '1') ? 'q' : undefined
+        (targetSquare[1] === '8' || targetSquare[1] === '1') ? 'q' : undefined
     const move = updated.move({ from: sourceSquare as Square, to: targetSquare as Square, promotion })
     if (!move) return false
     setGame(updated)
@@ -213,7 +237,7 @@ export default function AnalysisPage() {
       <div className="flex flex-1 min-h-0 p-6 gap-5">
 
         {/* ── Eval bar ── */}
-        <div className="flex flex-col items-center gap-1 shrink-0 select-none">
+        <div className="flex flex-col items-center gap-1 shrink-0 select-none w-4">
           <span className="text-xs font-mono text-gray-400 h-4">
             {blackWinning ? scoreText : ''}
           </span>
@@ -316,11 +340,10 @@ export default function AnalysisPage() {
             </button>
             <button
               onClick={() => setShowArrow(s => !s)}
-              className={`rounded-lg border text-sm font-medium px-4 py-2 transition-colors cursor-pointer ${
-                showArrow
+              className={`rounded-lg border text-sm font-medium px-4 py-2 transition-colors cursor-pointer ${showArrow
                   ? 'bg-violet-600 hover:bg-violet-700 text-white border-violet-600'
                   : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-              }`}
+                }`}
             >
               Best Move Arrow
             </button>
